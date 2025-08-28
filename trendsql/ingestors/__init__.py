@@ -1,0 +1,1 @@
+# TrendsQL ingestors package

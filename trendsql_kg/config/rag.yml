@@ -1,0 +1,125 @@
+# Agentic RAG Configuration
+planner:
+  # Router configuration
+  use_llm_router: true
+  llm_model: "gpt-4o-mini"
+  max_tokens: 100
+  
+  # Keyword signals for routing
+  sql_signals:
+    - "count"
+    - "sum"
+    - "average"
+    - "top"
+    - "rank"
+    - "growth last"
+    - "between"
+    - "from ... to ..."
+    - "%"
+    - "percentage"
+    - "trending"
+    - "highest"
+    - "lowest"
+    - "most"
+    - "least"
+    
+  kg_signals:
+    - "related"
+    - "connected"
+    - "graph"
+    - "path"
+    - "explain"
+    - "why"
+    - "how"
+    - "relationship"
+    - "link"
+    - "connection"
+    - "similar"
+    - "associated"
+    
+  vector_signals:
+    - "semantic"
+    - "similar"
+    - "like"
+    - "about"
+    - "describe"
+    - "explain"
+    - "what is"
+    - "tell me about"
+    
+  # Routing thresholds
+  confidence_threshold: 0.7
+  hybrid_threshold: 0.3  # minimum confidence for hybrid routing
+
+# Retrieval configuration
+retrieval:
+  # Top-k settings
+  top_k_sql: 50
+  top_k_kg: 25
+  top_k_vector: 10
+  
+  # Reranking
+  use_rerank: true
+  rerank_model: "gpt-4o-mini"
+  rerank_top_k: 5
+  
+  # Context window management
+  max_context_length: 4000
+  truncate_context: true
+  
+  # Time-based filtering
+  default_time_window_days: 90
+  max_time_window_days: 365
+
+# Generation configuration
+generation:
+  model: "gpt-4o-mini"
+  max_tokens: 800
+  temperature: 0.1
+  style: "concise_with_bullets"
+  
+  # Answer formatting
+  include_citations: true
+  include_confidence: true
+  include_route_info: true
+  
+  # Self-check
+  enable_self_check: true
+  self_check_threshold: 0.8
+
+# Vector search configuration
+vector_search:
+  model: "text-embedding-3-large"
+  similarity_threshold: 0.7
+  max_results: 20
+  
+  # Search strategies
+  search_strategies:
+    - "exact_match"
+    - "semantic_similarity"
+    - "hybrid"
+    
+  # Fallback behavior
+  fallback_to_keyword: true
+  fallback_to_sql: true
+
+# Caching
+caching:
+  enabled: true
+  ttl_seconds: 3600
+  max_cache_size: 1000
+  
+  # Cache keys
+  cache_schema: true
+  cache_summaries: true
+  cache_embeddings: true
+
+# Performance
+performance:
+  parallel_retrieval: true
+  max_parallel_requests: 3
+  timeout_seconds: 30
+  
+  # Rate limiting
+  rate_limit_requests_per_minute: 60
+  rate_limit_burst: 10

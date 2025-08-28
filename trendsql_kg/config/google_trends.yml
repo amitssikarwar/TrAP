@@ -1,0 +1,70 @@
+# Google Trends Configuration
+source: google_trends
+
+# Keywords to track
+keywords:
+  - "Ayurveda for dogs"
+  - "Dog anxiety"
+  - "Pet wellness"
+  - "Natural pet care"
+  - "Dog supplements"
+  - "Pet health trends"
+  - "Holistic pet care"
+  - "Dog nutrition"
+  - "Pet anxiety"
+  - "Natural dog food"
+
+# Geographic regions
+regions:
+  - "IN"  # India
+  - "US"  # United States
+  - "GB"  # United Kingdom
+  - "CA"  # Canada
+  - "AU"  # Australia
+
+# Time range
+time_range:
+  start_date: "2023-01-01"
+  end_date: null  # null = current date
+  period: "today 12-m"  # pytrends period format
+
+# Google Trends properties
+properties:
+  - ""  # web search
+  - "news"  # news search
+  - "images"  # image search
+  - "youtube"  # YouTube search
+  - "froogle"  # shopping search
+
+# Categories (Google Trends category codes)
+categories:
+  - 0  # All categories
+  - 12  # Health
+  - 958  # Pets & Animals
+
+# Data Processing
+processing:
+  # Interest thresholds
+  min_interest: 0
+  max_interest: 100
+  
+  # Related topics
+  fetch_related_topics: true
+  related_topics_limit: 10
+  related_topics_types: ["rising", "top"]
+  
+  # Upsert strategy
+  upsert:
+    conflict_resolution: "update"
+    update_fields: ["interest"]
+
+# Rate limiting
+rate_limit:
+  requests_per_minute: 10
+  delay_between_requests: 6  # seconds
+
+# Output
+output:
+  batch_size: 100
+  log_progress: true
+  save_raw_data: false

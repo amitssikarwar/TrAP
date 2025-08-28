@@ -1,0 +1,76 @@
+# Knowledge Graph Configuration
+neo4j:
+  uri: "bolt://localhost:7687"
+  user: "neo4j"
+  password: "neo4j"
+  database: "neo4j"
+  max_connection_lifetime: 3600
+  max_connection_pool_size: 50
+
+# Graph projection settings
+projection:
+  # Enable/disable different node types
+  topics: true
+  keywords: true
+  categories: true
+  regions: true
+  related_topics: true
+  
+  # Co-trends analysis
+  cotrends:
+    enabled: false
+    window_days: 90
+    min_correlation: 0.3
+    max_topics_per_correlation: 100
+    
+  # Keyword extraction from topics
+  keyword_extraction:
+    enabled: true
+    min_keyword_length: 3
+    max_keywords_per_topic: 10
+    use_llm_extraction: true
+
+# Node summarization
+summaries:
+  # Individual node summaries
+  node_summary: true
+  node_summary_max_length: 200
+  node_summary_model: "gpt-4o-mini"
+  
+  # Community summaries (GraphRAG pattern)
+  community_summary: true
+  community_summary_max_length: 500
+  community_summary_model: "gpt-4o-mini"
+  
+  # Summary update strategy
+  update_strategy: "incremental"  # incremental, full, none
+  update_threshold_days: 7
+
+# Graph limits and performance
+limits:
+  max_topics: 5000
+  max_keywords: 5000
+  max_categories: 100
+  max_regions: 50
+  max_relationships_per_node: 100
+  
+# ETL settings
+etl:
+  batch_size: 1000
+  parallel_workers: 4
+  transaction_size: 100
+  retry_attempts: 3
+  retry_delay: 1
+  
+# Vector embeddings (if using Neo4j vector index)
+embeddings:
+  enabled: false
+  model: "text-embedding-3-large"
+  dimension: 3072
+  index_name: "node_embeddings"
+  
+# Logging
+logging:
+  level: "INFO"
+  log_cypher_queries: false
+  log_performance_metrics: true

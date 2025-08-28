@@ -1,0 +1,43 @@
+# Exploding Topics Configuration
+source: exploding
+mode: csv  # csv or api
+
+# CSV Configuration
+csv:
+  file_path: data/exploding_topics.csv
+  delimiter: ","
+  encoding: utf-8
+  
+# API Configuration (if mode: api)
+api:
+  base_url: "https://explodingtopics.com/api"
+  endpoint: "/topics"
+  headers:
+    User-Agent: "TrendSQL-KG/1.0"
+  rate_limit: 1  # requests per second
+
+# Data Processing
+processing:
+  # Filtering options
+  filters:
+    min_growth_score: 0
+    min_popularity_score: 0
+    regions: []  # empty = all regions
+    categories: []  # empty = all categories
+  
+  # Transformations
+  transformations:
+    normalize_topic_names: true
+    extract_categories: true
+    extract_regions: true
+    
+  # Upsert strategy
+  upsert:
+    conflict_resolution: "update"  # update, ignore, fail
+    update_fields: ["growth_score", "popularity_score", "first_seen_date"]
+
+# Output
+output:
+  batch_size: 1000
+  log_progress: true
+  save_raw_data: false

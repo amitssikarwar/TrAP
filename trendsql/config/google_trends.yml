@@ -1,0 +1,24 @@
+# Google Trends Configuration
+# This file configures how to ingest Google Trends data
+
+# Keywords to track
+keywords: ["AI", "Dog food", "Ayurveda pets"]
+
+# Timeframe for data collection
+# pytrends format: 'now 7-d', 'today 3-m', 'today 12-m', '2024-01-01 2024-08-28'
+timeframe: "today 3-m"
+
+# Geographic location
+geo: "IN"                  # country code, '' for worldwide
+
+# Google Trends category
+category: 0                # int code; 0 for all categories
+
+# Google property to search
+gprop: ""                  # '', 'news', 'images', 'youtube', 'froogle'
+
+# Timezone offset in minutes (IST = 330)
+tz_offset_minutes: 330
+
+# Whether to fetch related topics
+fetch_related_topics: true

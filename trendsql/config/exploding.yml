@@ -1,0 +1,21 @@
+# Exploding Topics Configuration
+# This file configures how to ingest exploding topics data
+
+provider: exploding_topics        # or 'exploding' (name used internally)
+fetch_mode: csv                   # 'csv' | 'api'
+csv_path: ./data/exploding_topics.csv  # used if fetch_mode=csv
+
+# API configuration (if fetch_mode=api)
+api:
+  base_url: ""                    # if you have one; leave blank if not
+  api_key: ""                     # if required
+
+# Filters to apply to the data
+filters:
+  min_growth_score: 0             # minimum growth score to include
+  regions: ["US", "IN"]           # [] means all/unknown
+  categories: []                  # e.g., ["AI","Pets"] - empty means all categories
+
+# Database options
+upsert: true                      # insert or update by (topic,region)
+                                 # false = insert only (will fail on duplicates)

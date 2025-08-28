@@ -1,0 +1,338 @@
+
+# 1) What you’ll get (clear outcomes)
+
+* **Unified trend index** per keyword/topic, brand, and product, by market & category.
+* **Horizon-aware forecasts:**
+
+  * **Short-term:** 1–8 weeks (momentum & acceleration).
+  * **Seasonal:** recurring intra-year patterns (holidays, back-to-school, etc.).
+  * **Long-term:** 6–24 months (structural adoption/decline).
+* **Product vs Brand segmentation** (e.g., “Yeti tumbler” = product; “YETI” = brand).
+* **Auto-generated insight briefs** with citations from sources (Agentic RAG over a Knowledge Graph).
+* **Alerts & dashboards**: opportunities, inflections, and risk (trend fatigue).
+
+---
+
+# 2) High-level architecture (layers)
+
+```
+[Data Sources]
+  ├─ Exploding Topics (topics, growth scores)
+  ├─ Google Trends (SVI by region/time)
+  └─ Jungle Scout (ASINs, brand, category, sales rank, revenue, reviews)
+
+          ↓ Ingestion & Normalization (scheduled)
+    Cloud Run/Functions + Workflows/Composer + Pub/Sub
+          ↓
+     Raw Landing (Object Store) → Bronze (Delta/Parquet)
+          ↓
+     Warehouse (e.g., BigQuery)  ←→  Vector Store (BigQuery Vector/pgvector)
+          ↓
+     Knowledge Graph (Neo4j/Aura or Neptune)  ←→  Entity Resolver
+          ↓
+     Feature Store (Feast)  →  Forecasting (Prophet/NeuralProphet/TFT/N-HiTS)
+          ↓
+     Trend Scores & Classifiers (Product vs Brand; horizon tags)
+          ↓
+     Agentic RAG Services (Cloud Run): Insight Writer, Opportunity Detector
+          ↓
+     APIs + Dashboards (Looker/Metabase) + Alerts (Slack/Email/Telegram)
+```
+
+---
+
+# 3) Data ingestion & normalization
+
+**Connectors**
+
+* **Exploding Topics:** topic name, category, ET growth score, first-seen date, regions (via export/API).
+* **Google Trends (pytrends):** weekly/daily **SVI** (search volume index) by keyword, region, and category; related queries.
+* **Jungle Scout:** product catalog (ASIN, title, **brand**, category, price, BSR, est. revenue, review/ratings, review velocity); exports or partner API.
+
+**Normalization**
+
+* Canonical fields: `source`, `keyword/topic`, `brand`, `product_id` (ASIN), `category`, `region`, `timestamp`, `metric_name`, `metric_value`.
+* Text cleaning: lowercasing, unicode normalize, remove trademark suffixes, lemmatize.
+* **Taxonomy mapping:** retail hierarchy (Department → Category → Sub-category → Attributes). Keep a master **category dictionary**.
+
+**Entity resolution (crucial)**
+
+* “Brand” dictionary seeded from Jungle Scout brands; expand via web/wiki lists.
+* Product linking: `ASIN` is gold; also fuzzy match product titles to topics/queries.
+* Resolve ambiguous tokens (e.g., “Apple” → Brand vs fruit) using:
+
+  * **Contextual classifier:** features from co-occurring words (e.g., “iPhone”, “Mac” → brand).
+  * **KG cues:** if token frequently links to `Brand` nodes via ecommerce data, bias brand.
+
+---
+
+# 4) Knowledge Graph (KG) design
+
+**Core nodes**
+
+* `Brand` (name, aliases, parent company, categories)
+* `Product` (ASIN, title, brand\_id, attributes)
+* `TrendTopic` (keyword/topic, category, seed\_source)
+* `Category` (taxonomy nodes)
+* `Region` (country, state where applicable)
+* `PublisherSource` (Exploding Topics, Google, Jungle Scout)
+
+**Edges**
+
+* `(TrendTopic)-[:MENTIONS]->(Brand|Product)`
+* `(TrendTopic)-[:BELONGS_TO]->(Category)`
+* `(Product)-[:MADE_BY]->(Brand)`
+* `(TrendTopic)-[:CORRELATES_WITH {rho, lag}]->(Product|Brand)`
+* `(TrendTopic)-[:POPULAR_IN]->(Region)`
+* `(Brand|Product)-[:PERFORMS_IN {rev, bsr, price, reviews}]->(Region)`
+
+**What the KG enables**
+
+* Precise **Product vs Brand** disambiguation.
+* Cross-signal reasoning (search interest ↔ sales/reviews).
+* Context packs for RAG (the agents fetch just the relevant subgraph).
+
+---
+
+# 5) Feature engineering & horizon tags
+
+**Time-series base (per topic/brand/product × region):**
+
+* `SVI` level & **z-score** (vs 52-week history)
+* **Momentum**: ΔSVI over 1, 4, 8 weeks
+* **Acceleration**: ΔMomentum (week-over-week)
+* **Volatility**: rolling stdev (4/12/26 weeks)
+* **Seasonality strength**: from STL decomposition; spectral / autocorr peaks
+* **Changepoints**: BOCPD or Prophet changepoints
+* **Cross-signal** (from Jungle Scout):
+
+  * `BSR_trend`, `Revenue_trend`, `ReviewVelocity`, `Price elasticity proxy` (Δsales vs Δprice)
+* **Co-trend**: cosine similarity of SVI vectors with peer topics
+* **Geo dispersion**: #regions above z-threshold
+* **Adoption curve** proxy: logistic fit, time-to-half (t½)
+
+**Horizon tagging**
+
+* **Short-term (1–8 weeks):** high momentum/acceleration; low seasonality.
+* **Seasonal:** strong seasonal component (STL seasonal strength > threshold).
+* **Long-term (6–24 months):** persistent positive slope, low volatility, multi-region dispersion.
+
+**Example TrendScore (per entity):**
+
+```
+TrendScore = 0.30*z(SVI) 
+           + 0.25*Momentum_4w 
+           + 0.15*Acceleration_1w 
+           + 0.10*SeasonalityStrength_adjusted 
+           + 0.10*GeoDispersion 
+           + 0.10*CrossSignalLift  // (normalized Jungle Scout composite)
+```
+
+* Calibrate weights with Bayesian optimization on backtests (see §9).
+
+---
+
+# 6) Product vs Brand classification
+
+**Two-stage approach**
+
+1. **Rule/Dictionary pass:** exact/alias match to `Brand` nodes; ASIN→`Product`.
+2. **Classifier (fallback):** features = token embeddings + KG priors (degree to Brand vs Product), context words, source hints (Jungle Scout → product-heavy).
+   Output: `is_brand`, `is_product`, `confidence`.
+   Attach both **if** both are true (e.g., “Dyson Supersonic” = product of brand Dyson) and let downstream consumers split.
+
+---
+
+# 7) Forecasting stack (multi-horizon)
+
+**Decomposition**
+
+* STL: `SVI = Trend + Seasonal + Residual` (weekly or daily depending on signal).
+
+**Models (choose per series quality)**
+
+* **Lightweight:** Prophet / NeuralProphet for quick, robust baselines.
+* **Global deep TS:** TFT / N-HiTS / N-BEATS trained across many topics to share seasonality/holiday effects (with entity embeddings for category/region).
+* **Validators:** Mann–Kendall for monotonic trend significance; CUSUM/BOCPD for regime shifts.
+
+**Horizon outputs**
+
+* Short-term forecast (1–8 weeks) with prediction intervals.
+* 12-month seasonality map (peaks, troughs).
+* 6–24 month long-term projection + changepoint notes.
+
+---
+
+# 8) Agentic RAG over the KG (insight automation)
+
+**Tools**
+
+* **Graph retriever:** Cypher templates like:
+
+  * “Top rising `TrendTopic` in *Pet Care* last 4 weeks with `CrossSignalLift>τ` that link to `(Product)-[:MADE_BY]->(Brand)`”
+* **Vector retriever:** for unstructured snippets (topic descriptions, product blurbs, reviews).
+* **Fusion retriever:** blend graph context + semantic passages.
+
+**Agents**
+
+1. **Ingestion Agent** – runs connectors, normalizes, logs lineage.
+2. **Resolver Agent** – entity resolution, KG updates, confidence scoring.
+3. **Forecaster Agent** – triggers feature store retrieval + models; writes forecasts.
+4. **Opportunity Agent** – scans for rules: “TrendScore↑ & Accel↑ & CrossSignalLift↑ & Seasonality≯” to fire alerts.
+5. **Insight Writer Agent** – drafts 6-8 bullet briefs with **citations** (links to ET topic, Google Trends plot, Jungle Scout metrics), recommends actions (assortment, pricing, content).
+
+**Guardrails**
+
+* Deterministic graph/SQL snippets → agents can only call approved queries.
+* Always include **source IDs & timestamps** in the generated briefs.
+
+---
+
+# 9) Backtesting, evaluation & governance
+
+**Backtests**
+
+* For each historical week, pretend you “don’t know the future”, score trends, and see if **next-period growth** (SVI or Jungle Scout revenue/review velocity) validates the signal.
+
+**Metrics**
+
+* Forecast: sMAPE / MAPE, coverage of prediction intervals.
+* Trend picking: Precision\@K for “rising next 4/8 weeks”.
+* Stability: drift in weights; alert precision/recall.
+
+**Governance**
+
+* Full data lineage (Bronze→Silver→Gold tables).
+* Model registry & versioning; A/B compare scoring formulas.
+* PII-free by design; brand/product only.
+
+---
+
+# 10) Serving: dashboards, APIs, alerts
+
+**Dashboards (Looker/Metabase)**
+
+* **Trend Radar:** top rising by category & region.
+* **Product vs Brand split:** stacked bars with momentum & forecast bands.
+* **Seasonality calendar:** heatmap of monthly lift per topic.
+* **Cross-signal panel:** search vs sales/reviews correlation & lags.
+
+**Alerts**
+
+* Slack/Email/Telegram when:
+
+  * `TrendScore` crosses threshold,
+  * new changepoint,
+  * pre-season peak window approaching (lead time configurable).
+
+**APIs**
+
+* `/trends?category=…&region=…`
+* `/forecast?entity_id=…&horizon=short|seasonal|long`
+* `/insight_brief?entity_id=…`
+
+---
+
+# 11) Data model (warehouse & graph) – starter schemas
+
+**Gold tables (BigQuery)**
+
+* `topics_time_series(topic_id, region, ts, svi, svi_z, momentum_1w, momentum_4w, accel_1w, seasonality, …)`
+* `products_daily(product_id, brand_id, region, ts, price, revenue_est, bsr, reviews, review_velocity, …)`
+* `entity_links(topic_id, product_id, brand_id, confidence)`
+* `forecasts(entity_id, horizon, ts_forecast, yhat, yhat_lo, yhat_hi, model_version)`
+* `trend_scores(entity_id, ts, score, components, thresholds)`
+
+**KG (Neo4j) – sample**
+
+```cypher
+MERGE (t:TrendTopic {name:"pumpkin dog treats"})
+MERGE (c:Category {name:"Pet Care > Treats"})
+MERGE (b:Brand {name:"RasaTails"})
+MERGE (p:Product {asin:"B0XXXXXX", title:"Pumpkin & Carrot Dog Treats"})
+MERGE (r:Region {code:"US"})
+MERGE (t)-[:BELONGS_TO]->(c)
+MERGE (p)-[:MADE_BY]->(b)
+MERGE (t)-[:MENTIONS {confidence:0.92}]->(p)
+MERGE (t)-[:POPULAR_IN]->(r);
+```
+
+---
+
+# 12) Step-by-step build plan (fast path)
+
+**Phase 0 – Foundations (Week 1)**
+
+* Stand up **BigQuery** (or your warehouse), **Cloud Run**, **Object Storage**.
+* Implement connectors (ET exports, pytrends, JS exports).
+* Land to **Bronze**, normalize to **Silver** tables.
+
+**Phase 1 – Entity & KG (Week 2)**
+
+* Build brand dictionary + resolver; map products (ASIN) and topics.
+* Create KG (Neo4j Aura) and nightly sync job from warehouse.
+* Implement Product vs Brand classifier + confidence.
+
+**Phase 2 – Scoring & Forecasting (Week 3)**
+
+* Compute features & initial **TrendScore**.
+* Baseline forecasts with **Prophet/NeuralProphet**, then add **TFT/N-HiTS** for heavy-hitters.
+* Create backtest harness; tune score weights via Bayesian search.
+
+**Phase 3 – Agentic RAG & Serving (Week 4)**
+
+* Graph + vector retrievers; **Insight Writer Agent** with citation rules.
+* Opportunity rules & **alerts**.
+* Dashboards + public APIs.
+
+---
+
+# 13) Tech stack (GCP-leaning, adjust as you prefer)
+
+* **Orchestration:** Cloud Workflows/Composer; Pub/Sub triggers.
+* **Compute:** Cloud Run/Functions; Dataflow (Beam) for heavy ETL.
+* **Storage/Warehouse:** GCS + **BigQuery** (use built-in vector search).
+* **Graph:** Neo4j Aura (managed).
+* **Feature Store:** Feast (BQ as offline, Redis as online).
+* **Models:** Prophet/NeuralProphet + PyTorch Forecasting (TFT/N-HiTS).
+* **RAG:** Graph retriever (Cypher) + vector retriever (BQ Vector) fused in a lightweight service.
+* **Dashboards:** Looker/Looker Studio/Metabase.
+* **Alerts:** Slack/Email/Telegram webhooks.
+
+---
+
+# 14) Example rules & queries
+
+**Opportunity rule (SQL)**
+
+```sql
+SELECT entity_id, ts, score
+FROM trend_scores
+WHERE ts = DATE_SUB(CURRENT_DATE(), INTERVAL 0 WEEK)
+  AND score > 0.75
+  AND components.momentum_4w > 0
+  AND components.accel_1w > 0
+  AND components.seasonality_strength < 0.5;
+```
+
+**Graph slice for RAG**
+
+```cypher
+MATCH (t:TrendTopic)-[:MENTIONS]->(p:Product)-[:MADE_BY]->(b:Brand),
+      (t)-[:BELONGS_TO]->(c:Category),
+      (t)-[:POPULAR_IN]->(r:Region)
+WHERE c.name CONTAINS "Pet Care" AND r.code IN ["US","IN","UK"]
+RETURN t,b,p,r
+ORDER BY t.growth_score DESC
+LIMIT 20;
+```
+
+---
+
+# 15) What to do next (practical to-dos)
+
+1. Share a **short list of target categories & regions** to seed keywords/topics.
+2. Provide **access paths** (exports/API) for Exploding Topics and Jungle Scout.
+3. I’ll spin up the **Bronze→Silver pipelines**, the **brand dictionary**, and a small **KG**.
+4. Within 10–14 days you’ll have a **first Trend Radar** + **insight briefs**; then we iterate on scoring and alerts.
+
